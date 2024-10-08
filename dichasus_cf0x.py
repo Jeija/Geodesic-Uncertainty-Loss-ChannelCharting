@@ -31,7 +31,7 @@ def load_calibrate_timedomain(path, offset_path):
         csi = tf.complex(csi[:, :, 0], csi[:, :, 1])
         csi = tf.signal.fftshift(csi, axes=1)
 
-        # Convert from rev2 back to rev1 format
+        # Convert from rev2 back to rev1 format (normalize STO)
         incr = tf.cast(tf.math.angle(tf.math.reduce_sum(csi[:,1:] * tf.math.conj(csi[:,:-1]))), tf.complex64)
         csi = csi * tf.exp(-1.0j * incr * tf.cast(tf.range(csi.shape[-1]), tf.complex64))[tf.newaxis,:]
 
@@ -62,11 +62,6 @@ def load_calibrate_timedomain(path, offset_path):
         csi = tf.stack([tf.gather(csi, antenna_inidces) for antenna_inidces in ASSIGNMENTS])
         return csi, pos, time
 
-    def filter_arrays(arrays_to_keep):
-        def remove(csi, pos, time):
-            return tf.gather(csi, arrays_to_keep), pos, time
-        return remove
-    
     dataset = tf.data.TFRecordDataset(path)
     
     dataset = dataset.map(record_parse_function, num_parallel_calls = tf.data.AUTOTUNE)
@@ -74,7 +69,6 @@ def load_calibrate_timedomain(path, offset_path):
     dataset = dataset.map(csi_time_domain, num_parallel_calls = tf.data.AUTOTUNE)
     dataset = dataset.map(cut_out_taps(507, 520), num_parallel_calls = tf.data.AUTOTUNE)
     dataset = dataset.map(order_by_antenna_assignments, num_parallel_calls = tf.data.AUTOTUNE)
-    dataset = dataset.map(filter_arrays([1]), num_parallel_calls = tf.data.AUTOTUNE)
 
     return dataset
 
@@ -93,7 +87,26 @@ inputpaths = [
     }
 ]
 
-full_dataset = load_calibrate_timedomain(inputpaths[0]["tfrecords"], inputpaths[0]["offsets"])
+dichasus_cf0x = load_calibrate_timedomain(inputpaths[0]["tfrecords"], inputpaths[0]["offsets"])
 
 for path in inputpaths[1:]:
-    full_dataset = full_dataset.concatenate(load_calibrate_timedomain(path["tfrecords"], path["offsets"]))
+    dichasus_cf0x = dichasus_cf0x.concatenate(load_calibrate_timedomain(path["tfrecords"], path["offsets"]))
+
+dichasus_cf0x = dichasus_cf0x.shard(4, 0)
+
+groundtruth_positions = []
+csi_time_domain = []
+timestamps = []
+
+for csi, pos, time in dichasus_cf0x.batch(1000):
+    csi_time_domain.append(csi.numpy())
+    groundtruth_positions.append(pos.numpy())
+    timestamps.append(time.numpy())
+
+csi_time_domain = np.concatenate(csi_time_domain)
+groundtruth_positions = np.concatenate(groundtruth_positions)
+timestamps = np.concatenate(timestamps)
+
+MEASUREMENT_INTERVAL = 0.048
+timestamps = timestamps - timestamps[0]
+timestamps = np.round(timestamps / MEASUREMENT_INTERVAL) * MEASUREMENT_INTERVAL
