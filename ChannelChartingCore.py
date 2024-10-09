@@ -10,7 +10,7 @@ import sklearn
 import keras
 import queue
 
-def find_shortest_paths(pairwise_dissimilarity_matrix, target_nodes = None, n_neighbors = 40):
+def find_shortest_paths(pairwise_dissimilarity_matrix, target_nodes = None, n_neighbors = 20):
     nbrs_alg = sklearn.neighbors.NearestNeighbors(n_neighbors = n_neighbors, metric="precomputed", n_jobs = -1)
     nbrs = nbrs_alg.fit(pairwise_dissimilarity_matrix)
     nbg = sklearn.neighbors.kneighbors_graph(nbrs, n_neighbors, metric = "precomputed", mode="distance")
