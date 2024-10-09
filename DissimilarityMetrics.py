@@ -47,6 +47,16 @@ class GaussianDissimilarityMetric(abc.ABC):
         """
         pass
 
+    @abc.abstractmethod
+    def is_contractable(self):
+        """
+        Query whether this type of dissimilarity metric can be contracted.
+        Path contraction eliminates hops A->B->C where both hops take the same dissimilarity metric.
+        This requires an implementation the returns the same mean / variance for paths A->B->C and A->C,
+        which is only possible in special cases.
+        """
+        pass
+
 
 ##################################################
 # Angle Delay Profile-Based Dissimilarity Metric #
@@ -97,6 +107,9 @@ class ADPDissimilarityMetric(GaussianDissimilarityMetric):
 
     def get_datapoint_count(self):
         return self.adp_distance_mean.shape[0]
+
+    def is_contractable(self):
+        return False
 
     def estimate_velocity(self, timestamps):
         # TODO: Estimate true velocity from ADP dissimilarities
@@ -156,7 +169,7 @@ class VelocityDissimilarityMetric(GaussianDissimilarityMetric):
         # Since this reduces the overall path length (and hence also the length of the longest shortest path),
         # this makes path generation much faster later on.
         # (Since CC runs shortest path algorithm on neighborhood graph, not all intermediary nodes will be skipped)
-        path_hop_cost = np.ones_like(dissimilarity_matrix) * 1e-4
+        path_hop_cost = np.ones_like(dissimilarity_matrix) * 1e-5
         np.fill_diagonal(path_hop_cost, 0)
         dissimilarity_matrix += path_hop_cost
 
@@ -167,6 +180,9 @@ class VelocityDissimilarityMetric(GaussianDissimilarityMetric):
         t_b = self.timestamps[paths[:,1:]]
 
         return self.velocity_model.get_sum_of_interval_integrals_mean_variance(t_a, t_b, mask)
+
+    def is_contractable(self):
+        return True
 
     def get_datapoint_count(self):
         return self.timestamps.shape[0]
