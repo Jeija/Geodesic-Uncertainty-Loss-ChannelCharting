@@ -49,6 +49,7 @@ class PlotChartCallback(keras.callbacks.Callback):
         self.update_period = update_period
 
     def set_model(self, model):
+        self.training_model = model
         self.y_true = tf.Variable(np.zeros([self.batch_size, 1 + 2 + self.max_hops + 1]), dtype=tf.float32, shape=tf.TensorShape([self.batch_size, 1 + 2 + self.max_hops + 1]))
         self.y_pred = tf.Variable(np.zeros([self.datapoint_count, 2]), dtype=tf.float32, shape=tf.TensorShape([self.datapoint_count, 2]))
 
@@ -58,6 +59,8 @@ class PlotChartCallback(keras.callbacks.Callback):
         return 0
 
     def on_train_batch_end(self, batch, logs=None):
+        print(self.training_model.optimizer.learning_rate)
+
         if batch % self.update_period == self.update_period - 1:
             pred_positions = self.y_pred.numpy()
 

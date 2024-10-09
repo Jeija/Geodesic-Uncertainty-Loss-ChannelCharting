@@ -10,7 +10,7 @@ import sklearn
 import keras
 import queue
 
-def find_shortest_paths(pairwise_dissimilarity_matrix, target_nodes = None, n_neighbors = 20):
+def find_shortest_paths(pairwise_dissimilarity_matrix, target_nodes = None, n_neighbors = 40):
     nbrs_alg = sklearn.neighbors.NearestNeighbors(n_neighbors = n_neighbors, metric="precomputed", n_jobs = -1)
     nbrs = nbrs_alg.fit(pairwise_dissimilarity_matrix)
     nbg = sklearn.neighbors.kneighbors_graph(nbrs, n_neighbors, metric = "precomputed", mode="distance")
@@ -306,13 +306,15 @@ class ChannelChart:
 
         # Train Forward Charting Function
         training_loss = ChannelChartingLoss(timestamps)
-        learning_rate_decay_factor = learning_rate_final / learning_rate_initial
+
+        learning_rate_decay_factor = (learning_rate_final / learning_rate_initial)**(100000/6000000)
+        #learning_rate_decay_factor = learning_rate_final / learning_rate_initial
 
         lr_schedule = tf.keras.optimizers.schedules.ExponentialDecay(
                         initial_learning_rate=learning_rate_initial,
-                        decay_steps=training_batches,
+                        decay_steps=100000,
                         decay_rate=learning_rate_decay_factor,
-                        staircase=False)
+                        staircase=True)
 
         optimizer = tf.keras.optimizers.Adam(learning_rate = lr_schedule)
 

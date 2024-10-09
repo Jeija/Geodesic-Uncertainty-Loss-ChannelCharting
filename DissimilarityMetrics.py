@@ -136,11 +136,7 @@ class SimpleGaussianProcess:
         if self.perfectly_correlated:
             # Constrained random sampling: Make sure realization is within 1 standard deviation of mean in perfectly correlated case,
             # otherwise can get unlucky with result due to limited realization count
-            sample = None
-            while sample is None or np.abs(sample - self.process_mean) < 1 * np.sqrt(self.process_variance):
-                sample = np.random.normal(self.process_mean, np.sqrt(self.process_variance))
-            
-            return sample * np.ones_like(t)[np.newaxis,:]
+            return np.random.normal(self.process_mean, np.sqrt(self.process_variance)) * np.ones_like(t)[np.newaxis,:]
         else:
             return np.abs(np.random.normal(self.process_mean, np.sqrt(self.process_variance), size = (realization_count, len(t))))
 
@@ -154,6 +150,15 @@ class VelocityDissimilarityMetric(GaussianDissimilarityMetric):
         velocities = self.velocity_model.get_realization(self.timestamps[:-1])
         displacements = np.concatenate([[0], np.cumsum(velocities * np.diff(self.timestamps))])
         dissimilarity_matrix = np.abs(displacements[np.newaxis,:] - displacements[:,np.newaxis])
+
+        # Numerical trick that makes shortest path algorithm "skip" unnecessary intermediary hops:
+        # Add a tiny additional cost to each hop. This way, e.g. path A->C is cheaper than path A->B->C
+        # Since this reduces the overall path length (and hence also the length of the longest shortest path),
+        # this makes path generation much faster later on.
+        # (Since CC runs shortest path algorithm on neighborhood graph, not all intermediary nodes will be skipped)
+        path_hop_cost = np.ones_like(dissimilarity_matrix) * 1e-4
+        np.fill_diagonal(path_hop_cost, 0)
+        dissimilarity_matrix += path_hop_cost
 
         return dissimilarity_matrix
 
