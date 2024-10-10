@@ -242,7 +242,7 @@ class GaussianDissimilarityModel:
         # Subsample paths such that there are no more than subsampled_pathhops hops
         if subsampled_pathhops is not None:
             for i in range(len(paths)):
-                l = min(subsampled_pathhops, path_hops[i])
+                l = min(subsampled_pathhops[i], path_hops[i])
                 paths[i,:l+1] = paths[i, np.linspace(0, path_hops[i], l+1, dtype = np.int32)]
                 paths[i,l+1:] = paths[i, -1]
                 path_hops[i] = l
@@ -367,7 +367,8 @@ class ChannelChart:
                 all_datapoints = np.arange(csi_time_domain.shape[0])
 
                 # Determine number of hops for current subsampling ratio
-                pathhops = min(max(min_pathhops, int(batch_count / training_batches * max_pathhops)), max_pathhops)
+                pathhops_limit = min(max(min_pathhops, int(batch_count / training_batches * max_pathhops)), max_pathhops)
+                pathhops = np.random.randint(1, pathhops_limit + 1, size = batch_size)
 
                 # Generate random short paths and assemble y_true, consisting of batch_size paths, each made up of
                 # * number of path hops
