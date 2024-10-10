@@ -92,13 +92,14 @@ dichasus_cf0x = load_calibrate_timedomain(inputpaths[0]["tfrecords"], inputpaths
 for path in inputpaths[1:]:
     dichasus_cf0x = dichasus_cf0x.concatenate(load_calibrate_timedomain(path["tfrecords"], path["offsets"]))
 
-dichasus_cf0x = dichasus_cf0x.shard(4, 0)
+dichasus_cf0x_testset = dichasus_cf0x.shard(4, 2)
+dichasus_cf0x_trainingset = dichasus_cf0x.shard(4, 0)
 
 groundtruth_positions = []
 csi_time_domain = []
 timestamps = []
 
-for csi, pos, time in dichasus_cf0x.batch(1000):
+for csi, pos, time in dichasus_cf0x_trainingset.batch(1000):
     csi_time_domain.append(csi.numpy())
     groundtruth_positions.append(pos.numpy())
     timestamps.append(time.numpy())
