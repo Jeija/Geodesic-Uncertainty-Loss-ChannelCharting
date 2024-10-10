@@ -29,6 +29,7 @@ def find_shortest_paths(pairwise_dissimilarity_matrix, target_nodes = None, n_ne
                 break
     
             d, predecessors = scipy.sparse.csgraph.dijkstra(nbg, directed=False, indices=target_nodes[index], return_predecessors=True)
+            predecessors[predecessors == -9999] = -1
             del d
                 
             output_queue.put((index, predecessors))
@@ -74,10 +75,10 @@ def find_path_with_most_hops(predecessor_matrix):
     
             hops = 0
             current = np.arange(predecessor_matrix.shape[1], dtype = np.int32)
-            active = (current != -9999)
+            active = (current != -1)
             while np.any(active):
                 current[active] = predecessor_matrix[i, current[active]]
-                active = (current != -9999)
+                active = (current != -1)
                 hops = hops + 1
                 
             output_queue.put(hops)
@@ -120,13 +121,12 @@ def contract_path(predecessors, dissimilarity_choices, metric_to_contract):
         # Check which path sections are contractable and perform contraction
         predecessors_of_predecessors = np.take_along_axis(predecessors, predecessors, 1)
         contractable = np.logical_and(current_choice == metric_to_contract, predecessors_choice == metric_to_contract)
-        contractable = np.logical_and(contractable, predecessors != -9999)
-        contractable = np.logical_and(contractable, predecessors_of_predecessors != -9999)
-    
+        contractable = np.logical_and(contractable, predecessors != -1)
+        contractable = np.logical_and(contractable, predecessors_of_predecessors != -1)
+
+        print(f"{contractable.sum()} path sections remain to be contracted")
         predecessors[contractable] = predecessors_of_predecessors[contractable]
     
-        print(f"{contractable.sum()} path sections remain to be contracted")
-
 class GaussianDissimilarityModel:
     def __init__(self, metrics, enable_path_contraction = True):
         self.metrics = metrics
@@ -171,7 +171,7 @@ class GaussianDissimilarityModel:
             current_target_nodes = self.target_nodes[first_path_index:last_path_index]
             predecessors = find_shortest_paths(pairwise_dissimilarity_matrix, current_target_nodes)
 
-            assert(np.all(np.sum(np.where(predecessors == -9999, 1, 0), axis = 1) == 1))
+            assert(np.all(np.sum(np.where(predecessors == -1, 1, 0), axis = 1) == 1))
 
             self.predecessor_matrix[first_path_index:last_path_index] = predecessors
             self.dissimilarity_matrix_choices[first_path_index:last_path_index] = dissimilarity_matrix_choice[np.arange(self.datapoint_count)[np.newaxis,:], predecessors][...,0]
@@ -278,17 +278,22 @@ class FeatureEngineeringLayer(keras.layers.Layer):
         return super().get_config()
 
 class ChannelChartingLoss(keras.losses.Loss):
-    def __init__(self, timestamps, name="CCLoss"):
+    def __init__(self, timestamps, acceleration_mean = 0.8, acceleration_variance = 1.7, acceleration_weight = 0.01, name="CCLoss"):
         super().__init__(name=name)
         self.timestamps = tf.constant(timestamps)
+
+        self.acceleration_mean = acceleration_mean
+        self.acceleration_variance = acceleration_variance
+        self.acceleration_weight = acceleration_weight
 
     def acceleration(self, pred_positions):
         pred_velocities = tf.experimental.numpy.diff(pred_positions, axis = 0) / tf.experimental.numpy.diff(self.timestamps)[:,tf.newaxis]
         pred_accelerations = tf.experimental.numpy.diff(pred_velocities, axis = 0) / tf.experimental.numpy.diff(self.timestamps)[:-1,tf.newaxis]
         pred_accelerations_abs = tf.math.sqrt(tf.math.reduce_sum(pred_accelerations**2, axis = -1) + 1e-6)
 
-        return tf.math.reduce_mean(tf.square(pred_accelerations_abs))
-    
+        # Model acceleration with folded normal distribution
+        return tf.math.reduce_mean((tf.square(pred_accelerations_abs - self.acceleration_mean) + tf.square(pred_accelerations_abs + self.acceleration_mean)) / self.acceleration_variance)
+
     def call(self, y_true, y_pred):
         # This is an ugly workaround, the loss function always gets y_pred as float, convert back to integer for index
         # This works as long as CSI tensor is not absolutely huge (16M+ entries), which can be assumed.
@@ -325,10 +330,10 @@ class ChannelChartingLoss(keras.losses.Loss):
         geodesic_loss = geodesic_loss + 0.01 * tf.math.reduce_sum(tf.math.maximum(path_distances - endpoint_distances[:,tf.newaxis], 0))
 
         # Combination
-        return geodesic_loss + 1e-4 * acceleration_loss
+        return geodesic_loss + self.acceleration_weight * acceleration_loss
 
 class ChannelChart:
-    def __init__(self, GDM, csi_time_domain, timestamps, batch_size = 3000, learning_rate_initial = 1e-2, learning_rate_final = 1e-4, min_pathhops = 1, max_pathhops = 30, training_batches = 2000, plot_callback = None):
+    def __init__(self, GDM, csi_time_domain, timestamps, batch_size = 3000, learning_rate_initial = 1e-2, learning_rate_final = 1e-4, min_pathhops = 1, max_pathhops = 30, training_batches = 2000, plot_callback = None, acceleration_mean = 0.8, acceleration_variance = 1.7, acceleration_weight = 0.01):
         # Build forward charting function
         fcf_input = keras.Input(shape=csi_time_domain.shape[1:] + (2,), name="input", dtype = tf.float32)
         fcf_output = FeatureEngineeringLayer()(fcf_input)
@@ -380,16 +385,15 @@ class ChannelChart:
             tf.TensorSpec(shape=(batch_size, 1 + 2 + max_pathhops + 1), dtype=tf.float32)))
 
         # Train Forward Charting Function
-        training_loss = ChannelChartingLoss(timestamps)
+        training_loss = ChannelChartingLoss(timestamps, acceleration_mean = acceleration_mean, acceleration_variance = acceleration_variance, acceleration_weight = acceleration_weight)
 
-        learning_rate_decay_factor = (learning_rate_final / learning_rate_initial)**(100000/6000000)
-        #learning_rate_decay_factor = learning_rate_final / learning_rate_initial
+        learning_rate_decay_factor = learning_rate_final / learning_rate_initial
 
         lr_schedule = tf.keras.optimizers.schedules.ExponentialDecay(
                         initial_learning_rate=learning_rate_initial,
-                        decay_steps=100000,
+                        decay_steps=training_batches,
                         decay_rate=learning_rate_decay_factor,
-                        staircase=True)
+                        staircase=False)
 
         optimizer = tf.keras.optimizers.Adam(learning_rate = lr_schedule)
 

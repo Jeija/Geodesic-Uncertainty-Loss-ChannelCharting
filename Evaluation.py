@@ -59,8 +59,6 @@ class PlotChartCallback(keras.callbacks.Callback):
         return 0
 
     def on_train_batch_end(self, batch, logs=None):
-        print(self.training_model.optimizer.learning_rate)
-
         if batch % self.update_period == self.update_period - 1:
             pred_positions = self.y_pred.numpy()
 
