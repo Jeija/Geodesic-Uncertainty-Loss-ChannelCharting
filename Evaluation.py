@@ -125,3 +125,22 @@ def mean_absolute_error_transformed(groundtruth_positions, channel_chart_positio
     cep = np.median(errors)
 
     return channel_chart_positions_transformed, errorvectors, errors, mae, cep
+
+def plot_predecessors(groundtruth_positions, predecessors, subsampling = 100):
+    plot_colorized(groundtruth_positions, groundtruth_positions, title="Predecessors", alpha = 0.5, show = False)
+
+    paths = []
+    current = np.arange(len(predecessors), dtype = np.int32)
+    active = (current != -9999)
+    while np.any(active):
+        current[active] = predecessors[current[active]]
+        active = (current != -9999)
+        paths.append(groundtruth_positions[current])
+
+    paths = np.asarray(paths)
+
+    for start in range(len(predecessors))[::subsampling]:
+        plt.plot(paths[:,start,0], paths[:,start,1], "r")
+
+    plt.scatter(paths[-1,0,0], paths[-1,0,1], s = 100, zorder=3)
+    plt.show()

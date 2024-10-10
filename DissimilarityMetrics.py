@@ -8,13 +8,16 @@ class GaussianDissimilarityMetric(abc.ABC):
     """
 
     @abc.abstractmethod
-    def get_realization(self):
+    def get_realization(self, output_matrix):
         """
         Retrieve a relization of the dissimilarity matrix of shape `(datapoint_count, datapoint_count)`.
         Entries with value `np.inf` mean that there is no known path according to this dissimilarity metric.
-        Returned values are in meters.
+        The scale of the output must be consistent across all dissimilarity metrics.
+        The convention is to provide the dissimilarities in meters.
+        To speed up this processing step, the result is not provided as a return value,
+        but is written to the pre-allocated buffer provided as a parameter.
 
-        :return: The realization of the dissimilarity matrix, NumPy array.
+        :param output_matrix: The realization of the dissimilarity matrix, NumPy array.
         """
         pass
 
@@ -85,15 +88,13 @@ class ADPDissimilarityMetric(GaussianDissimilarityMetric):
         adp_dissimilarity_matrix = compute_adp_dissimilarity_matrix(csi_time_domain).numpy()
         self.adp_distance_mean, self.adp_distance_variance = adp_to_mean_variance_distance_func(adp_dissimilarity_matrix)
 
-    def get_realization(self):
+    def get_realization(self, output_matrix):
         rng = np.random.default_rng()
         finite_distances = np.triu(self.adp_distance_mean != np.inf)
         random_numbers = np.abs(rng.normal(self.adp_distance_mean[finite_distances], np.sqrt(self.adp_distance_variance[finite_distances])))
-        realization = np.full_like(self.adp_distance_mean, np.inf)
-        realization[finite_distances] = random_numbers
-        np.transpose(realization)[finite_distances] = random_numbers
-
-        return realization
+        output_matrix.fill(np.inf)
+        output_matrix[finite_distances] = random_numbers
+        np.transpose(output_matrix)[finite_distances] = random_numbers
 
     def mean_variance_along_path(self, paths, mask):
         # Assume that ADP dissimilarity observations are perfectly uncorrelated
@@ -159,21 +160,20 @@ class VelocityDissimilarityMetric(GaussianDissimilarityMetric):
         self.velocity_model = SimpleGaussianProcess(velocity_mean, velocity_variance, perfectly_correlated)
         self.timestamps = timestamps
 
-    def get_realization(self):
+    def get_realization(self, output_matrix):
         velocities = self.velocity_model.get_realization(self.timestamps[:-1])
         displacements = np.concatenate([[0], np.cumsum(velocities * np.diff(self.timestamps))])
-        dissimilarity_matrix = np.abs(displacements[np.newaxis,:] - displacements[:,np.newaxis])
+        output_matrix[:] = np.abs(displacements[np.newaxis,:] - displacements[:,np.newaxis])
 
         # Numerical trick that makes shortest path algorithm "skip" unnecessary intermediary hops:
         # Add a tiny additional cost to each hop. This way, e.g. path A->C is cheaper than path A->B->C
         # Since this reduces the overall path length (and hence also the length of the longest shortest path),
         # this makes path generation much faster later on.
-        # (Since CC runs shortest path algorithm on neighborhood graph, not all intermediary nodes will be skipped)
-        path_hop_cost = np.ones_like(dissimilarity_matrix) * 1e-5
+        # (Since CC runs shortest path algorithm on neighborhood graph, not all intermediary nodes will be skipped.
+        # This is only achieved later through path contraction.)
+        path_hop_cost = np.ones_like(output_matrix) * 1e-5
         np.fill_diagonal(path_hop_cost, 0)
-        dissimilarity_matrix += path_hop_cost
-
-        return dissimilarity_matrix
+        output_matrix[:] += path_hop_cost
 
     def mean_variance_along_path(self, paths, mask):
         t_a = self.timestamps[paths[:,:-1]]

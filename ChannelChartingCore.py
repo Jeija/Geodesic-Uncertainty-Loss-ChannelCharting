@@ -10,7 +10,7 @@ import sklearn
 import keras
 import queue
 
-def find_shortest_paths(pairwise_dissimilarity_matrix, target_nodes = None, n_neighbors = 20):
+def find_shortest_paths(pairwise_dissimilarity_matrix, target_nodes = None, n_neighbors = 20, max_processes = 10):
     nbrs_alg = sklearn.neighbors.NearestNeighbors(n_neighbors = n_neighbors, metric="precomputed", n_jobs = -1)
     nbrs = nbrs_alg.fit(pairwise_dissimilarity_matrix)
     nbg = sklearn.neighbors.kneighbors_graph(nbrs, n_neighbors, metric = "precomputed", mode="distance")
@@ -33,20 +33,22 @@ def find_shortest_paths(pairwise_dissimilarity_matrix, target_nodes = None, n_ne
                 
             output_queue.put((index, predecessors))
     
-    with tqdm(total = len(target_nodes) * nbg.shape[0]) as pbar:
+    with tqdm(total = len(target_nodes) * nbg.shape[0], desc="Computing Shortest Paths") as pbar:
         todo_queue = mp.Queue()
         output_queue = mp.Queue()
 
-        for i in range(len(target_nodes)):
+        for i in tqdm(range(len(target_nodes)), desc="Preparing Dijkstra Inputs"):
             todo_queue.put(i)
 
-        for i in range(mp.cpu_count()):
+        process_count = min(max_processes, mp.cpu_count())
+
+        for i in tqdm(range(process_count), desc="Starting Processes"):
             todo_queue.put(-1)
             p = mp.Process(target = shortest_path_worker, args = (todo_queue, output_queue))
             p.start()
     
         finished_processes = 0
-        while finished_processes != mp.cpu_count():
+        while finished_processes != process_count:
             i, p = output_queue.get()
     
             if i == -1:
@@ -106,13 +108,34 @@ def find_path_with_most_hops(predecessor_matrix):
 
     return most_hops
 
+def contract_path(predecessors, dissimilarity_choices, metric_to_contract):
+    contractable = np.full(predecessors.shape, True)
+    
+    while contractable.sum() > 0:
+        # Get choice of dissimilarity metric from current node to predecessor
+        # and from predecessor to predecessor of predecessor.
+        current_choice = dissimilarity_choices
+        predecessors_choice = np.take_along_axis(dissimilarity_choices, predecessors, 1)
+    
+        # Check which path sections are contractable and perform contraction
+        predecessors_of_predecessors = np.take_along_axis(predecessors, predecessors, 1)
+        contractable = np.logical_and(current_choice == metric_to_contract, predecessors_choice == metric_to_contract)
+        contractable = np.logical_and(contractable, predecessors != -9999)
+        contractable = np.logical_and(contractable, predecessors_of_predecessors != -9999)
+    
+        predecessors[contractable] = predecessors_of_predecessors[contractable]
+    
+        print(f"{contractable.sum()} path sections remain to be contracted")
+
 class GaussianDissimilarityModel:
-    def __init__(self, metrics):
+    def __init__(self, metrics, enable_path_contraction = True):
         self.metrics = metrics
 
         self.datapoint_count = metrics[0].get_datapoint_count()
         for metric in metrics[1:]:
             assert(metric.get_datapoint_count() == self.datapoint_count)
+
+        self.enable_path_contraction = enable_path_contraction
 
     def generate_short_paths(self, total_path_count = 40000, realization_count = 8):
         assert(total_path_count % realization_count == 0)
@@ -132,7 +155,7 @@ class GaussianDissimilarityModel:
             dissimilarity_metrics_count = len(self.metrics)
             realizations = np.zeros((self.datapoint_count, self.datapoint_count, dissimilarity_metrics_count))
             for i, metric in enumerate(tqdm(self.metrics)):
-                realizations[:,:,i] = metric.get_realization()
+                metric.get_realization(realizations[:,:,i])
 
             # For every datapoint pair, select smallest dissimilarity realization
             print("Choosing smallest dissimilarity realization pair-wise...")
@@ -150,48 +173,29 @@ class GaussianDissimilarityModel:
 
             assert(np.all(np.sum(np.where(predecessors == -9999, 1, 0), axis = 1) == 1))
 
-            # Optional step for faster training: Contract predecessor matrix
-            # Some dissimilarity metrics may be "contractable", which means that path A->B->C and path A->C have the same
-            # mean, variance dissimilarity if all hops "->" refer to the same dissimilarity.
-            # In that case, we can shorten the path by replacing the predecessor of C (which is B) with A.
-            # We can detect this from the predecessor matrix by checking if an entry has the same dissimilarity type as its predecessor.
-            # This algorithm has log(N) complexity, where N is the length of the longest path for the same dissimilarity type.
-            realization_dissim_choices = dissimilarity_matrix_choice[np.arange(self.datapoint_count)[np.newaxis,:], predecessors][...,0]
-            if True: # TODO: Make path contraction optional
-                for metric_type, metric in enumerate(self.metrics):
-                    if metric.is_contractable():
-                        print(f"Contracting paths for metric {metric.__class__.__name__}")
-                        contractable = np.full(predecessors.shape, True)
-
-                        while contractable.sum() > 0:
-                            predecessors_of_predecessors = np.take_along_axis(predecessors, predecessors, 1)
-
-                            # Get choice of dissimilarity metric from current node to predecessor
-                            # and from predecessor to predecessor of predecessor.
-                            current_choice = realization_dissim_choices # np.take_along_axis(realization_dissim_choices, predecessors, 1)
-                            predecessors_choice = np.take_along_axis(realization_dissim_choices, predecessors, 1) # np.take_along_axis(realization_dissim_choices, predecessors_of_predecessors, 1)
-
-                            # Check which path sections are contractable and perform contraction
-                            contractable = np.logical_and(current_choice == metric_type, predecessors_choice == metric_type)
-                            contractable = np.logical_and(contractable, predecessors != -9999)
-                            contractable = np.logical_and(contractable, predecessors_of_predecessors != -9999)
-                            
-                            predecessors[contractable] = predecessors_of_predecessors[contractable]
-
-                            print(f"{contractable.sum()} path sections remain to be contracted")
-
             self.predecessor_matrix[first_path_index:last_path_index] = predecessors
-            self.dissimilarity_matrix_choices[first_path_index:last_path_index] = realization_dissim_choices
+            self.dissimilarity_matrix_choices[first_path_index:last_path_index] = dissimilarity_matrix_choice[np.arange(self.datapoint_count)[np.newaxis,:], predecessors][...,0]
 
             del pairwise_dissimilarity_matrix
             del dissimilarity_matrix_choice
             del realizations
 
+        # Optional step for faster training: Contract predecessor matrix
+        # Some dissimilarity metrics may be "contractable", which means that path A->B->C and path A->C have the same
+        # mean, variance dissimilarity if all hops "->" refer to the same dissimilarity.
+        # In that case, we can shorten the path by replacing the predecessor of C (which is B) with A.
+        # We can detect this from the predecessor matrix by checking if an entry has the same dissimilarity type as its predecessor.
+        # This algorithm has log(N) complexity, where N is the length of the longest path for the same dissimilarity type.
+        if self.enable_path_contraction:
+            for metric_type, metric in enumerate(self.metrics):
+                if metric.is_contractable():
+                    print(f"Contracting paths for metric {metric.__class__.__name__}")
+                    contract_path(self.predecessor_matrix, self.dissimilarity_matrix_choices, metric_type)
+
         # Determine new longest path after contraction
         print("Determining longest short path...")
-        current = np.ones(total_path_count, dtype = np.int32)[:,np.newaxis] * np.arange(self.datapoint_count, dtype = np.int32)[np.newaxis,:]
-
         self.longest_shortest_path = find_path_with_most_hops(self.predecessor_matrix)
+        print(f"Longest short path has {self.longest_shortest_path} hops")
 
     def get_longest_shortest_path(self):
         return self.longest_shortest_path
@@ -204,10 +208,10 @@ class GaussianDissimilarityModel:
         # Source indices are also datapoint indices, but target indices must be translated to datapoint indices
         # using self.target_nodes[path_target_indices]
         path_target_indices = np.random.randint(self.predecessor_matrix.shape[0], size = path_count)
-        path_source_indices = np.random.randint(self.datapoint_count, size = path_count)
+        path_source_indices = np.random.randint(self.predecessor_matrix.shape[1], size = path_count)
 
         # Prevent pairs where both indices refer to the same datapoint
-        path_source_indices[path_source_indices == self.target_nodes[path_target_indices]] = (path_source_indices[path_source_indices == self.target_nodes[path_target_indices]] + 1) % self.datapoint_count
+        path_source_indices[path_source_indices == self.target_nodes[path_target_indices]] = (path_source_indices[path_source_indices == self.target_nodes[path_target_indices]] + 1) % self.predecessor_matrix.shape[1]
         
         current = np.copy(path_source_indices)
         paths = np.zeros((len(current), self.longest_shortest_path), dtype = np.int32)
