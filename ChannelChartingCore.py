@@ -333,7 +333,7 @@ class ChannelChartingLoss(keras.losses.Loss):
         return geodesic_loss + self.acceleration_weight * acceleration_loss
 
 class ChannelChart:
-    def __init__(self, GDM, csi_time_domain, timestamps, batch_size = 3000, learning_rate_initial = 1e-2, learning_rate_final = 1e-4, min_pathhops = 1, max_pathhops = 30, training_batches = 2000, plot_callback = None, acceleration_mean = 0.8, acceleration_variance = 1.7, acceleration_weight = 0.01):
+    def __init__(self, GDM, csi_time_domain, timestamps, batch_size = 3000, learning_rate_initial = 1e-2, learning_rate_final = 1e-4, min_pathhops = 1, max_pathhops = 30, randomize_pathhops = False, training_batches = 2000, plot_callback = None, acceleration_mean = 0.8, acceleration_variance = 1.7, acceleration_weight = 0.01):
         # Build forward charting function
         fcf_input = keras.Input(shape=csi_time_domain.shape[1:] + (2,), name="input", dtype = tf.float32)
         fcf_output = FeatureEngineeringLayer()(fcf_input)
@@ -368,7 +368,10 @@ class ChannelChart:
 
                 # Determine number of hops for current subsampling ratio
                 pathhops_limit = min(max(min_pathhops, int(batch_count / training_batches * max_pathhops)), max_pathhops)
-                pathhops = np.random.randint(1, pathhops_limit + 1, size = batch_size)
+                if randomize_pathhops:
+                    pathhops = np.random.randint(1, pathhops_limit + 1, size = batch_size)
+                else:
+                    pathhops = np.ones(batch_size, dtype = np.int32) * pathhops_limit
 
                 # Generate random short paths and assemble y_true, consisting of batch_size paths, each made up of
                 # * number of path hops
