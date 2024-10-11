@@ -35,7 +35,7 @@ def affine_transform_channel_chart(groundtruth_pos, channel_chart_pos):
     return transform(channel_chart_pos)
 
 class PlotChartCallback(keras.callbacks.Callback):
-    def __init__(self, groundtruth_positions, datapoint_count, batch_size, max_hops, update_period = 200):
+    def __init__(self, groundtruth_positions, datapoint_count, max_hops, paths_to_plot_count = 50, update_period = 200):
         super().__init__()
 
         self.y_true = None
@@ -43,18 +43,18 @@ class PlotChartCallback(keras.callbacks.Callback):
 
         self.groundtruth_positions = groundtruth_positions
         self.datapoint_count = datapoint_count
-        self.batch_size = batch_size
+        self.paths_to_plot_count = paths_to_plot_count
         self.max_hops = max_hops
 
         self.update_period = update_period
 
     def set_model(self, model):
         self.training_model = model
-        self.y_true = tf.Variable(np.zeros([self.batch_size, 1 + 2 + self.max_hops + 1]), dtype=tf.float32, shape=tf.TensorShape([self.batch_size, 1 + 2 + self.max_hops + 1]))
+        self.y_true = tf.Variable(np.zeros([self.paths_to_plot_count, 1 + 2 + self.max_hops + 1]), dtype=tf.float32, shape=tf.TensorShape([self.paths_to_plot_count, 1 + 2 + self.max_hops + 1]))
         self.y_pred = tf.Variable(np.zeros([self.datapoint_count, 2]), dtype=tf.float32, shape=tf.TensorShape([self.datapoint_count, 2]))
 
     def metric(self, y_true, y_pred):
-        self.y_true.assign(y_true)
+        self.y_true.assign(y_true[:self.paths_to_plot_count])
         self.y_pred.assign(y_pred)
         return 0
 
@@ -73,7 +73,7 @@ class PlotChartCallback(keras.callbacks.Callback):
             y_true_np = tf.cast(self.y_true, tf.int32).numpy()
             paths_indices = y_true_np[:,3:]
 
-            for path_indices in paths_indices[:50]:
+            for path_indices in paths_indices:
                 path_positions = pred_positions[path_indices]
                 plt.plot(path_positions[:,0], path_positions[:,1])
             

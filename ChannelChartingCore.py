@@ -333,7 +333,7 @@ class ChannelChartingLoss(keras.losses.Loss):
         return geodesic_loss + self.acceleration_weight * acceleration_loss
 
 class ChannelChart:
-    def __init__(self, GDM, csi_time_domain, timestamps, batch_size = 3000, learning_rate_initial = 1e-2, learning_rate_final = 1e-4, min_pathhops = 1, max_pathhops = 30, randomize_pathhops = False, training_batches = 2000, plot_callback = None, acceleration_mean = 0.8, acceleration_variance = 1.7, acceleration_weight = 0.01):
+    def __init__(self, GDM, csi_time_domain, timestamps, min_batch_size = 1500, max_batch_size = 4000, learning_rate_initial = 1e-2, learning_rate_final = 1e-4, min_pathhops = 1, max_pathhops = 30, randomize_pathhops = False, training_batches = 2000, plot_callback = None, acceleration_mean = 0.8, acceleration_variance = 1.7, acceleration_weight = 0.01):
         # Build forward charting function
         fcf_input = keras.Input(shape=csi_time_domain.shape[1:] + (2,), name="input", dtype = tf.float32)
         fcf_output = FeatureEngineeringLayer()(fcf_input)
@@ -366,8 +366,11 @@ class ChannelChart:
                 batch_count = batch_count + 1
                 all_datapoints = np.arange(csi_time_domain.shape[0])
 
+                # Determine current batch size
+                batch_size = int(np.round(batch_count / training_batches * (max_batch_size - min_batch_size) + min_batch_size))
+                
                 # Determine number of hops for current subsampling ratio
-                pathhops_limit = min(max(min_pathhops, int(batch_count / training_batches * max_pathhops)), max_pathhops)
+                pathhops_limit = int(np.round(batch_count / training_batches * (max_pathhops - min_pathhops) + min_pathhops))
                 if randomize_pathhops:
                     pathhops = np.random.randint(1, pathhops_limit + 1, size = batch_size)
                 else:
@@ -386,7 +389,7 @@ class ChannelChart:
 
         random_path_dataset = tf.data.Dataset.from_generator(random_pair_batch_generator,
             output_signature=(tf.TensorSpec(shape=(csi_time_domain.shape[0]), dtype=tf.int32),
-            tf.TensorSpec(shape=(batch_size, 1 + 2 + max_pathhops + 1), dtype=tf.float32)))
+            tf.TensorSpec(shape=(None, 1 + 2 + max_pathhops + 1), dtype=tf.float32)))
 
         # Train Forward Charting Function
         training_loss = ChannelChartingLoss(timestamps, acceleration_mean = acceleration_mean, acceleration_variance = acceleration_variance, acceleration_weight = acceleration_weight)
