@@ -8,7 +8,7 @@ class GaussianDissimilarityMetric(abc.ABC):
     """
 
     @abc.abstractmethod
-    def get_realization(self, output_matrix):
+    def get_realization(self, output_matrix, variance_scale):
         """
         Retrieve a relization of the dissimilarity matrix of shape `(datapoint_count, datapoint_count)`.
         Entries with value `np.inf` mean that there is no known path according to this dissimilarity metric.
@@ -18,6 +18,7 @@ class GaussianDissimilarityMetric(abc.ABC):
         but is written to the pre-allocated buffer provided as a parameter.
 
         :param output_matrix: The realization of the dissimilarity matrix, NumPy array.
+        :param variance_scale: Scaling factor for the variance. May want to scale down variance if number of realizations is small to achieve result close to mean.
         """
         pass
 
@@ -88,10 +89,10 @@ class ADPDissimilarityMetric(GaussianDissimilarityMetric):
         adp_dissimilarity_matrix = compute_adp_dissimilarity_matrix(csi_time_domain).numpy()
         self.adp_distance_mean, self.adp_distance_variance = adp_to_mean_variance_distance_func(adp_dissimilarity_matrix)
 
-    def get_realization(self, output_matrix):
+    def get_realization(self, output_matrix, variance_scale):
         rng = np.random.default_rng()
         finite_distances = np.triu(self.adp_distance_mean != np.inf)
-        random_numbers = np.abs(rng.normal(self.adp_distance_mean[finite_distances], np.sqrt(self.adp_distance_variance[finite_distances])))
+        random_numbers = np.abs(rng.normal(self.adp_distance_mean[finite_distances], np.zeros_like(np.sqrt(self.adp_distance_variance[finite_distances] * variance_scale))))
         output_matrix.fill(np.inf)
         output_matrix[finite_distances] = random_numbers
         np.transpose(output_matrix)[finite_distances] = random_numbers
@@ -146,13 +147,13 @@ class SimpleGaussianProcess:
 
         return integrated_mean, integrated_variance
 
-    def get_realization(self, t):
+    def get_realization(self, t, variance_scale):
         if self.perfectly_correlated:
             # Constrained random sampling: Make sure realization is within 1 standard deviation of mean in perfectly correlated case,
             # otherwise can get unlucky with result due to limited realization count
-            return np.random.normal(self.process_mean, np.sqrt(self.process_variance)) * np.ones_like(t)[np.newaxis,:]
+            return np.random.normal(self.process_mean, np.sqrt(self.process_variance * variance_scale)) * np.ones_like(t)[np.newaxis,:]
         else:
-            return np.abs(np.random.normal(self.process_mean, np.sqrt(self.process_variance), size = (realization_count, len(t))))
+            return np.abs(np.random.normal(self.process_mean, np.sqrt(self.process_variance * variance_scale), size = (realization_count, len(t))))
 
 class VelocityDissimilarityMetric(GaussianDissimilarityMetric):
     def __init__(self, velocity_mean, velocity_variance, perfectly_correlated, timestamps):
@@ -160,8 +161,8 @@ class VelocityDissimilarityMetric(GaussianDissimilarityMetric):
         self.velocity_model = SimpleGaussianProcess(velocity_mean, velocity_variance, perfectly_correlated)
         self.timestamps = timestamps
 
-    def get_realization(self, output_matrix):
-        velocities = self.velocity_model.get_realization(self.timestamps[:-1])
+    def get_realization(self, output_matrix, variance_scale):
+        velocities = self.velocity_model.get_realization(self.timestamps[:-1], variance_scale)
         displacements = np.concatenate([[0], np.cumsum(velocities * np.diff(self.timestamps))])
         output_matrix[:] = np.abs(displacements[np.newaxis,:] - displacements[:,np.newaxis])
 

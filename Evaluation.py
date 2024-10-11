@@ -68,7 +68,7 @@ class PlotChartCallback(keras.callbacks.Callback):
             mae = np.mean(errors)
             cep = np.median(errors)
             
-            plot_colorized(pred_positions, self.groundtruth_positions, title = f"Error Vectors, MAE = {mae:.4f}m, CEP = {cep:.4f}m", show = False)
+            plot_colorized(pred_positions, self.groundtruth_positions, title = f"MAE = {mae:.4f}m, CEP = {cep:.4f}m", show = False)
 
             y_true_np = tf.cast(self.y_true, tf.int32).numpy()
             paths_indices = y_true_np[:,3:]

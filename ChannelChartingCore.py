@@ -137,7 +137,7 @@ class GaussianDissimilarityModel:
 
         self.enable_path_contraction = enable_path_contraction
 
-    def generate_short_paths(self, total_path_count = 40000, realization_count = 8):
+    def generate_short_paths(self, total_path_count = 40000, realization_count = 8, variance_scale = 0.1):
         assert(total_path_count % realization_count == 0)
         paths_per_realization = total_path_count // realization_count
 
@@ -155,7 +155,7 @@ class GaussianDissimilarityModel:
             dissimilarity_metrics_count = len(self.metrics)
             realizations = np.zeros((self.datapoint_count, self.datapoint_count, dissimilarity_metrics_count))
             for i, metric in enumerate(tqdm(self.metrics)):
-                metric.get_realization(realizations[:,:,i])
+                metric.get_realization(realizations[:,:,i], variance_scale)
 
             # For every datapoint pair, select smallest dissimilarity realization
             print("Choosing smallest dissimilarity realization pair-wise...")
