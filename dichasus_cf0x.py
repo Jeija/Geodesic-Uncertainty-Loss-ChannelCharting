@@ -62,19 +62,28 @@ def load_calibrate_timedomain(path, offset_path, array_to_cut = None):
 
     def cut_array(to_cut):
         def cut_func(csi, pos, time):
-            return csi[to_cut][tf.newaxis], pos, time
+            return tf.gather(csi, to_cut)[tf.newaxis], pos, time
 
         return cut_func
+
+    def apply_calibration_cut(to_cut):
+        if to_cut is None:
+            to_cut = np.arange(len(spec["antennas"]))
+        else:
+            to_cut = np.asarray([to_cut])
+
+        def apply_calibration(csi, pos, time):
+            sto_offset = tf.tensordot(tf.constant(offsets["sto"]), 2 * np.pi * tf.range(tf.shape(csi)[-1], dtype = tf.float32) / tf.cast(tf.shape(csi)[-1], tf.float32), axes = 0)
+            cpo_offset = tf.tensordot(tf.constant(offsets["cpo"]), tf.ones(tf.shape(csi)[-1], dtype = tf.float32), axes = 0)
     
-    def apply_calibration(csi, pos, time):
-        sto_offset = tf.tensordot(tf.constant(offsets["sto"]), 2 * np.pi * tf.range(tf.shape(csi)[-1], dtype = tf.float32) / tf.cast(tf.shape(csi)[-1], tf.float32), axes = 0)
-        cpo_offset = tf.tensordot(tf.constant(offsets["cpo"]), tf.ones(tf.shape(csi)[-1], dtype = tf.float32), axes = 0)
+            compensation = tf.exp(tf.complex(0.0, sto_offset + cpo_offset))
+            compensation_by_antenna = tf.stack([[tf.gather(compensation, antenna_indices) for antenna_indices in array] for array in antenna_assignments])
+            compensation_by_antenna = tf.gather(compensation_by_antenna, to_cut)
+            csi = csi * compensation_by_antenna
+    
+            return csi, pos, time
 
-        compensation = tf.exp(tf.complex(0.0, sto_offset + cpo_offset))
-        compensation_by_antenna = tf.stack([[tf.gather(compensation, antenna_indices) for antenna_indices in array] for array in antenna_assignments])
-        csi = csi * compensation_by_antenna
-
-        return csi, pos, time
+        return apply_calibration
 
     def csi_time_domain(csi, pos, time):
         csi = tf.signal.fftshift(tf.signal.ifft(tf.signal.fftshift(csi, axes=-1)),axes=-1)
@@ -95,7 +104,7 @@ def load_calibrate_timedomain(path, offset_path, array_to_cut = None):
     if array_to_cut is not None:
         dataset = dataset.map(cut_array(array_to_cut))
     
-    dataset = dataset.map(apply_calibration, num_parallel_calls = tf.data.AUTOTUNE)
+    dataset = dataset.map(apply_calibration_cut(array_to_cut), num_parallel_calls = tf.data.AUTOTUNE)
     dataset = dataset.map(csi_time_domain, num_parallel_calls = tf.data.AUTOTUNE)
     dataset = dataset.map(cut_out_taps(507, 520), num_parallel_calls = tf.data.AUTOTUNE)
 
@@ -114,10 +123,10 @@ def load_inputpaths(array_to_cut):
 
 testset, trainingset = load_inputpaths(None)
 
-#singlearray_testsets = []
-#singlearray_trainingsets = []
-#
-#for array in range(4):
-#    testset, trainingset = load_inputpaths(array)
-#    singlearray_testsets.append(testset)
-#    singlearray_trainingsets.append(trainingset)
+singlearray_testsets = []
+singlearray_trainingsets = []
+
+for array in range(4):
+    sa_testset, sa_trainingset = load_inputpaths(array)
+    singlearray_testsets.append(sa_testset)
+    singlearray_trainingsets.append(sa_trainingset)
