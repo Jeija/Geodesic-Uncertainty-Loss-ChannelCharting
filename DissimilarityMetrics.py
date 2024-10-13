@@ -69,12 +69,12 @@ class GaussianDissimilarityMetric(abc.ABC):
 def compute_adp_dissimilarity_matrix(csi_array):
 	output = tf.TensorArray(tf.float32, size = csi_array.shape[0])
 
-	powers = tf.einsum("lbmt,lbmt->lbt", csi_array, tf.math.conj(csi_array))
+	powers = tf.einsum("lbrmt,lbrmt->lbt", csi_array, tf.math.conj(csi_array))
 	for i in tf.range(csi_array.shape[0]):
 		w = csi_array[i:,:,:,:]
 		h = csi_array[i,:,:,:]
 
-		dotproducts = tf.abs(tf.square(tf.einsum("bmt,lbmt->lbt", tf.math.conj(h), w)))
+		dotproducts = tf.abs(tf.square(tf.einsum("brmt,lbrmt->lbt", tf.math.conj(h), w)))
 		d_new = tf.math.reduce_sum(1 - dotproducts / tf.math.real(powers[i] * powers[i:]), axis = (1, 2))
 		d = tf.concat([tf.zeros(i), tf.maximum(d_new, 0)], 0)
 

@@ -268,14 +268,40 @@ class FeatureEngineeringLayer(keras.layers.Layer):
         super().__init__(*args, **kwargs)
 
     def call(self, csi):
-        # Compute sample correlations for any combination of two antennas in the whole system
-        # for the same datapoint and time tap.
         csi = tf.complex(csi[...,0], csi[...,1])
-        sample_autocorrelations = tf.einsum("dbmt,dbnt->dtbmn", csi, tf.math.conj(csi))
-        return tf.stack([tf.math.real(sample_autocorrelations), tf.math.imag(sample_autocorrelations)], axis = -1)
+
+        ## Provide sample autocorrelation separately across columns / rows / diagonals / antidiagonals of antenna arrays
+        #sample_autocorrelations_along_rows = tf.einsum("dbrmt,dbsmt->dbtrsm", csi, tf.math.conj(csi))
+        #sample_autocorrelations_along_columns = tf.einsum("dbrmt,dbrnt->dbtrmn", csi, tf.math.conj(csi))
+        #sample_autocorrelations_along_diagonals = tf.einsum("dbmt,dbmt->dbtm", csi[:,:,0,:-1,:], tf.math.conj(csi[:,:,1,1:,:]))
+        #sample_autocorrelations_along_antidiagonals = tf.einsum("dbmt,dbmt->dbtm", csi[:,:,0,1:,:], tf.math.conj(csi[:,:,1,:-1,:]))
+
+        ## Flatten along all dimensions except datapoint index dimension
+        #sample_autocorrelations_along_rows_flat = tf.reshape(sample_autocorrelations_along_rows, (-1, tf.math.reduce_prod(sample_autocorrelations_along_rows.shape[1:]),))
+        #sample_autocorrelations_along_columns_flat = tf.reshape(sample_autocorrelations_along_columns, (-1, tf.math.reduce_prod(sample_autocorrelations_along_columns.shape[1:])))
+        #sample_autocorrelations_along_diagonals_flat = tf.reshape(sample_autocorrelations_along_diagonals, (-1, tf.math.reduce_prod(sample_autocorrelations_along_diagonals.shape[1:]),))
+        #sample_autocorrelations_along_antidiagonals_flat = tf.reshape(sample_autocorrelations_along_antidiagonals, (-1, tf.math.reduce_prod(sample_autocorrelations_along_antidiagonals.shape[1:]),))
+
+        #feature_input = tf.concat([tf.math.real(sample_autocorrelations_along_rows_flat), tf.math.imag(sample_autocorrelations_along_rows_flat),
+        #                         tf.math.real(sample_autocorrelations_along_columns_flat), tf.math.imag(sample_autocorrelations_along_columns_flat),
+        #                         tf.math.real(sample_autocorrelations_along_diagonals_flat), tf.math.imag(sample_autocorrelations_along_diagonals_flat),
+        #                         tf.math.real(sample_autocorrelations_along_antidiagonals_flat), tf.math.imag(sample_autocorrelations_along_antidiagonals_flat)], axis = -1)
+
+        csi_sum_by_array = tf.math.reduce_sum(csi, axis = (2, 3))
+        sample_autocorrelations = tf.einsum("dbrmt,dbsnt->dbrsmnt", csi, tf.math.conj(csi))
+        array_sample_autocorrelations = tf.einsum("dbt,dat->dabt", csi_sum_by_array, tf.math.conj(csi_sum_by_array))
+
+        sample_autocorrelations_flat = tf.reshape(sample_autocorrelations, [-1, tf.math.reduce_prod(sample_autocorrelations.shape[1:])])
+        array_sample_autocorrelations_flat = tf.reshape(array_sample_autocorrelations, [-1, tf.math.reduce_prod(array_sample_autocorrelations.shape[1:])])
+        
+        feature_input = tf.concat([tf.math.real(sample_autocorrelations_flat), tf.math.imag(sample_autocorrelations_flat),
+                                  tf.math.real(array_sample_autocorrelations_flat), tf.math.imag(array_sample_autocorrelations_flat)], axis = -1)
+
+        return feature_input
 
     def get_config(self):
         return super().get_config()
+
 
 class ChannelChartingLoss(keras.losses.Loss):
     def __init__(self, timestamps, acceleration_mean = 0.8, acceleration_variance = 1.7, acceleration_weight = 0.01, name="CCLoss"):

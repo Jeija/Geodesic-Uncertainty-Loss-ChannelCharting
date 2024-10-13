@@ -2,15 +2,31 @@ import tensorflow as tf
 import numpy as np
 import json
 
-# Antenna definitions
-ASSIGNMENTS = [
-    [0, 13, 31, 29, 3, 7, 1, 12 ],
-    [30, 26, 21, 25, 24, 8, 22, 15],
-    [28, 5, 10, 14, 6, 2, 16, 18],
-    [19, 4, 23, 17, 20, 11, 9, 27]
+inputpaths = [
+    {
+        "tfrecords" : "dichasus-cf0x-rev2/dichasus-cf02.tfrecords",
+        "offsets" : "dichasus-cf0x-rev2/reftx-offsets-dichasus-cf02.json"
+    },
+    {
+        "tfrecords" : "dichasus-cf0x-rev2/dichasus-cf03.tfrecords",
+        "offsets" : "dichasus-cf0x-rev2/reftx-offsets-dichasus-cf03.json"
+    },
+    {
+        "tfrecords" : "dichasus-cf0x-rev2/dichasus-cf04.tfrecords",
+        "offsets" : "dichasus-cf0x-rev2/reftx-offsets-dichasus-cf04.json"
+    }
 ]
 
-ANTENNACOUNT = np.sum([len(antennaArray) for antennaArray in ASSIGNMENTS])
+spec = None
+
+antenna_assignments = []
+antenna_count = 0
+
+with open("dichasus-cf0x-rev2/spec.json") as specfile:
+    spec = json.load(specfile)
+    for antenna in spec["antennas"]:
+        antenna_count = antenna_count + sum([len(row) for row in antenna["assignments"]])
+        antenna_assignments.append(antenna["assignments"])
 
 def load_calibrate_timedomain(path, offset_path):
     offsets = None
@@ -27,7 +43,7 @@ def load_calibrate_timedomain(path, offset_path):
             },
         )
 
-        csi = tf.ensure_shape(tf.io.parse_tensor(record["csi"], out_type=tf.float32), (ANTENNACOUNT, 1024, 2))
+        csi = tf.ensure_shape(tf.io.parse_tensor(record["csi"], out_type=tf.float32), (antenna_count, 1024, 2))
         csi = tf.complex(csi[:, :, 0], csi[:, :, 1])
         csi = tf.signal.fftshift(csi, axes=1)
 
@@ -40,52 +56,40 @@ def load_calibrate_timedomain(path, offset_path):
 
         return csi, position[:2], time
 
+    def order_by_antenna_assignments(csi, pos, time):
+        csi = tf.stack([[tf.gather(csi, antenna_indices) for antenna_indices in array] for array in antenna_assignments])
+        return csi, pos, time
+
     def apply_calibration(csi, pos, time):
-        sto_offset = tf.tensordot(tf.constant(offsets["sto"]), 2 * np.pi * tf.range(tf.shape(csi)[1], dtype = tf.float32) / tf.cast(tf.shape(csi)[1], tf.float32), axes = 0)
-        cpo_offset = tf.tensordot(tf.constant(offsets["cpo"]), tf.ones(tf.shape(csi)[1], dtype = tf.float32), axes = 0)
-        csi = tf.multiply(csi, tf.exp(tf.complex(0.0, sto_offset + cpo_offset)))
+        sto_offset = tf.tensordot(tf.constant(offsets["sto"]), 2 * np.pi * tf.range(tf.shape(csi)[-1], dtype = tf.float32) / tf.cast(tf.shape(csi)[-1], tf.float32), axes = 0)
+        cpo_offset = tf.tensordot(tf.constant(offsets["cpo"]), tf.ones(tf.shape(csi)[-1], dtype = tf.float32), axes = 0)
+
+        compensation = tf.exp(tf.complex(0.0, sto_offset + cpo_offset))
+        compensation_by_antenna = tf.stack([[tf.gather(compensation, antenna_indices) for antenna_indices in array] for array in antenna_assignments])
+        csi = csi * compensation_by_antenna
 
         return csi, pos, time
 
     def csi_time_domain(csi, pos, time):
-        csi = tf.signal.fftshift(tf.signal.ifft(tf.signal.fftshift(csi, axes=1)),axes=1)
+        csi = tf.signal.fftshift(tf.signal.ifft(tf.signal.fftshift(csi, axes=-1)),axes=-1)
 
         return csi, pos, time
 
     def cut_out_taps(tap_start, tap_stop):
         def cut_out_taps_func(csi, pos, time):
-            return csi[:,tap_start:tap_stop], pos, time
+            return csi[...,tap_start:tap_stop], pos, time
 
         return cut_out_taps_func
-
-    def order_by_antenna_assignments(csi, pos, time):
-        csi = tf.stack([tf.gather(csi, antenna_inidces) for antenna_inidces in ASSIGNMENTS])
-        return csi, pos, time
 
     dataset = tf.data.TFRecordDataset(path)
     
     dataset = dataset.map(record_parse_function, num_parallel_calls = tf.data.AUTOTUNE)
+    dataset = dataset.map(order_by_antenna_assignments, num_parallel_calls = tf.data.AUTOTUNE)
     dataset = dataset.map(apply_calibration, num_parallel_calls = tf.data.AUTOTUNE)
     dataset = dataset.map(csi_time_domain, num_parallel_calls = tf.data.AUTOTUNE)
     dataset = dataset.map(cut_out_taps(507, 520), num_parallel_calls = tf.data.AUTOTUNE)
-    dataset = dataset.map(order_by_antenna_assignments, num_parallel_calls = tf.data.AUTOTUNE)
 
     return dataset
-
-inputpaths = [
-    {
-        "tfrecords" : "dichasus-cf0x-rev2/dichasus-cf02.tfrecords",
-        "offsets" : "dichasus-cf0x-rev2/reftx-offsets-dichasus-cf02.json"
-    },
-    {
-        "tfrecords" : "dichasus-cf0x-rev2/dichasus-cf03.tfrecords",
-        "offsets" : "dichasus-cf0x-rev2/reftx-offsets-dichasus-cf03.json"
-    },
-    {
-        "tfrecords" : "dichasus-cf0x-rev2/dichasus-cf04.tfrecords",
-        "offsets" : "dichasus-cf0x-rev2/reftx-offsets-dichasus-cf04.json"
-    }
-]
 
 dichasus_cf0x = load_calibrate_timedomain(inputpaths[0]["tfrecords"], inputpaths[0]["offsets"])
 
