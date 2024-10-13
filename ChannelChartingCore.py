@@ -291,11 +291,23 @@ class FeatureEngineeringLayer(keras.layers.Layer):
         sample_autocorrelations = tf.einsum("dbrmt,dbsnt->dbrsmnt", csi, tf.math.conj(csi))
         array_sample_autocorrelations = tf.einsum("dbt,dat->dabt", csi_sum_by_array, tf.math.conj(csi_sum_by_array))
 
+        # Simple trick to make training converge to better to global optimum:
+        # Also provided weighted version of horizontal sample autocorrelations (within same row)
+        # It is reasonable to assume that horizontal (azimuth) information is more meaningful anyway since
+        # most UEs will be somewhere on the surface.
+        horiz1 = sample_autocorrelations[:,:,0,0,:,:,:] * 4
+        horiz2 = sample_autocorrelations[:,:,1,1,:,:,:] * 4
+        
         sample_autocorrelations_flat = tf.reshape(sample_autocorrelations, [-1, tf.math.reduce_prod(sample_autocorrelations.shape[1:])])
         array_sample_autocorrelations_flat = tf.reshape(array_sample_autocorrelations, [-1, tf.math.reduce_prod(array_sample_autocorrelations.shape[1:])])
+        horiz1_flat = tf.reshape(horiz1, [-1, tf.math.reduce_prod(horiz1.shape[1:])])
+        horiz2_flat = tf.reshape(horiz2, [-1, tf.math.reduce_prod(horiz2.shape[1:])])
+
         
         feature_input = tf.concat([tf.math.real(sample_autocorrelations_flat), tf.math.imag(sample_autocorrelations_flat),
-                                  tf.math.real(array_sample_autocorrelations_flat), tf.math.imag(array_sample_autocorrelations_flat)], axis = -1)
+                                  tf.math.real(array_sample_autocorrelations_flat), tf.math.imag(array_sample_autocorrelations_flat),
+                                  tf.math.real(horiz1_flat), tf.math.imag(horiz1_flat),
+                                   tf.math.real(horiz2_flat), tf.math.imag(horiz2_flat)], axis = -1)
 
         return feature_input
 
@@ -385,13 +397,14 @@ class ChannelChart:
         output = self.fcf(csi_layer)
         training_model = tf.keras.models.Model(training_input, output, name = "TrainingModel")
 
-        # Random path generator
-        def random_pair_batch_generator():
-            batch_count = 0
+        def batch_generator_worker(todo_queue, output_queue):
             while True:
-                batch_count = batch_count + 1
-                all_datapoints = np.arange(csi_time_domain.shape[0])
+                batch_count = todo_queue.get()
 
+                if batch_count is None:
+                    output_queue.put((-1, None))
+                    break
+        
                 # Determine current batch size
                 batch_size = int(np.round(batch_count / training_batches * (max_batch_size - min_batch_size) + min_batch_size))
                 
@@ -401,7 +414,7 @@ class ChannelChart:
                     pathhops = np.random.randint(1, pathhops_limit + 1, size = batch_size)
                 else:
                     pathhops = np.ones(batch_size, dtype = np.int32) * pathhops_limit
-
+    
                 # Generate random short paths and assemble y_true, consisting of batch_size paths, each made up of
                 # * number of path hops
                 # * mean value of dissimilarity random variable
@@ -410,9 +423,42 @@ class ChannelChart:
                 paths, path_hops, total_dissimilarity_means, total_dissimilarity_variances = GDM.get_random_short_paths(batch_size, pathhops)
                 paths = paths[:,:max_pathhops + 1]
                 y_true = np.hstack([path_hops[:,np.newaxis], total_dissimilarity_means[:,np.newaxis], total_dissimilarity_variances[:,np.newaxis], paths])
+    
+                output_queue.put((batch_count, y_true))
 
-                yield all_datapoints, tf.cast(y_true, tf.float32)
+        y_true_pregenerated = dict()
+        with tqdm(total = training_batches + 5, desc="Pre-computing training paths") as pbar:
+            todo_queue = mp.Queue()
+            output_queue = mp.Queue()
+    
+            for batch in tqdm(range(training_batches + 5), desc="Preparing multiprocessing inputs"):
+                todo_queue.put(batch)
+    
+            process_count = mp.cpu_count()
+    
+            for i in tqdm(range(process_count), desc="Starting Processes"):
+                todo_queue.put(-1)
+                p = mp.Process(target = batch_generator_worker, args = (todo_queue, output_queue))
+                p.start()
+        
+            finished_processes = 0
+            while finished_processes != process_count:
+                batch_count, y_true = output_queue.get()
+        
+                if batch_count == -1:
+                    finished_processes = finished_processes + 1
+                else:
+                    y_true_pregenerated[batch_count] = y_true
+                    pbar.update(1)
 
+        def random_pair_batch_generator():
+            all_datapoints = np.arange(csi_time_domain.shape[0])
+            batch_count = 0
+            while True:
+                batch_count = batch_count + 1
+                yield all_datapoints, y_true_pregenerated[batch_count]
+                
+        
         random_path_dataset = tf.data.Dataset.from_generator(random_pair_batch_generator,
             output_signature=(tf.TensorSpec(shape=(csi_time_domain.shape[0]), dtype=tf.int32),
             tf.TensorSpec(shape=(None, 1 + 2 + max_pathhops + 1), dtype=tf.float32)))

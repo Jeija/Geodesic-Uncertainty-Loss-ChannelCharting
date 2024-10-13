@@ -28,7 +28,7 @@ with open("dichasus-cf0x-rev2/spec.json") as specfile:
         antenna_count = antenna_count + sum([len(row) for row in antenna["assignments"]])
         antenna_assignments.append(antenna["assignments"])
 
-def load_calibrate_timedomain(path, offset_path):
+def load_calibrate_timedomain(path, offset_path, array_to_cut = None):
     offsets = None
     with open(offset_path, "r") as offsetfile:
         offsets = json.load(offsetfile)
@@ -60,6 +60,12 @@ def load_calibrate_timedomain(path, offset_path):
         csi = tf.stack([[tf.gather(csi, antenna_indices) for antenna_indices in array] for array in antenna_assignments])
         return csi, pos, time
 
+    def cut_array(to_cut):
+        def cut_func(csi, pos, time):
+            return csi[to_cut][tf.newaxis], pos, time
+
+        return cut_func
+    
     def apply_calibration(csi, pos, time):
         sto_offset = tf.tensordot(tf.constant(offsets["sto"]), 2 * np.pi * tf.range(tf.shape(csi)[-1], dtype = tf.float32) / tf.cast(tf.shape(csi)[-1], tf.float32), axes = 0)
         cpo_offset = tf.tensordot(tf.constant(offsets["cpo"]), tf.ones(tf.shape(csi)[-1], dtype = tf.float32), axes = 0)
@@ -85,33 +91,33 @@ def load_calibrate_timedomain(path, offset_path):
     
     dataset = dataset.map(record_parse_function, num_parallel_calls = tf.data.AUTOTUNE)
     dataset = dataset.map(order_by_antenna_assignments, num_parallel_calls = tf.data.AUTOTUNE)
+
+    if array_to_cut is not None:
+        dataset = dataset.map(cut_array(array_to_cut))
+    
     dataset = dataset.map(apply_calibration, num_parallel_calls = tf.data.AUTOTUNE)
     dataset = dataset.map(csi_time_domain, num_parallel_calls = tf.data.AUTOTUNE)
     dataset = dataset.map(cut_out_taps(507, 520), num_parallel_calls = tf.data.AUTOTUNE)
 
     return dataset
 
-dichasus_cf0x = load_calibrate_timedomain(inputpaths[0]["tfrecords"], inputpaths[0]["offsets"])
+def load_inputpaths(array_to_cut):
+    dichasus_cf0x = load_calibrate_timedomain(inputpaths[0]["tfrecords"], inputpaths[0]["offsets"], array_to_cut)
+    
+    for path in inputpaths[1:]:
+        dichasus_cf0x = dichasus_cf0x.concatenate(load_calibrate_timedomain(path["tfrecords"], path["offsets"], array_to_cut))
+    
+    testset = dichasus_cf0x.shard(4, 2)
+    trainingset = dichasus_cf0x.shard(4, 0)
 
-for path in inputpaths[1:]:
-    dichasus_cf0x = dichasus_cf0x.concatenate(load_calibrate_timedomain(path["tfrecords"], path["offsets"]))
+    return testset, trainingset
 
-dichasus_cf0x_testset = dichasus_cf0x.shard(4, 2)
-dichasus_cf0x_trainingset = dichasus_cf0x.shard(4, 0)
+testset, trainingset = load_inputpaths(None)
 
-groundtruth_positions = []
-csi_time_domain = []
-timestamps = []
-
-for csi, pos, time in dichasus_cf0x_trainingset.batch(1000):
-    csi_time_domain.append(csi.numpy())
-    groundtruth_positions.append(pos.numpy())
-    timestamps.append(time.numpy())
-
-csi_time_domain = np.concatenate(csi_time_domain)
-groundtruth_positions = np.concatenate(groundtruth_positions)
-timestamps = np.concatenate(timestamps)
-
-MEASUREMENT_INTERVAL = 0.048
-timestamps = timestamps - timestamps[0]
-timestamps = np.round(timestamps / MEASUREMENT_INTERVAL) * MEASUREMENT_INTERVAL
+#singlearray_testsets = []
+#singlearray_trainingsets = []
+#
+#for array in range(4):
+#    testset, trainingset = load_inputpaths(array)
+#    singlearray_testsets.append(testset)
+#    singlearray_trainingsets.append(trainingset)
