@@ -392,7 +392,7 @@ class ChannelChart:
                 batch_size = int(np.round(batch_count / training_batches * (max_batch_size - min_batch_size) + min_batch_size))
                 
                 # Determine number of hops for current subsampling ratio
-                pathhops_length_limit = (batch_count / training_batches)**0.2 * (min_hoplength - max_hoplength) + max_hoplength
+                pathhops_length_limit = (batch_count / training_batches)**0.15 * (min_hoplength - max_hoplength) + max_hoplength
                 if randomize_pathhops:
                     pathhops_maxlength = np.random.uniform(pathhops_length_limit, max_hoplength, size = batch_size)
                 else:
