@@ -35,7 +35,7 @@ def affine_transform_channel_chart(groundtruth_pos, channel_chart_pos):
     return transform(channel_chart_pos)
 
 class PlotChartCallback(keras.callbacks.Callback):
-    def __init__(self, groundtruth_positions, datapoint_count, max_hops, paths_to_plot_count = 50, update_period = 200):
+    def __init__(self, groundtruth_positions, datapoint_count, max_hops = 100, paths_to_plot_count = 50, update_period = 200):
         super().__init__()
 
         self.y_true = None

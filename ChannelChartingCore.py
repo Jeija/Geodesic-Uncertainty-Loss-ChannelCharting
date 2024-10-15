@@ -200,7 +200,7 @@ class GaussianDissimilarityModel:
     def get_longest_shortest_path(self):
         return self.longest_shortest_path
     
-    def get_random_short_paths(self, path_count, subsampled_pathhops = None):
+    def get_random_short_paths(self, path_count, hop_skip_limit = None):
         # returns (path_targets, path_sources, paths, path_hops, path_means, path_variances)
         # where paths is of shape (path_count, maximum path length) and all others are of shape path_count
 
@@ -240,9 +240,9 @@ class GaussianDissimilarityModel:
             total_dissimilarity_variances += variances
         
         # Subsample paths such that there are no more than subsampled_pathhops hops
-        if subsampled_pathhops is not None:
+        if hop_skip_limit is not None:
             for i in range(len(paths)):
-                l = min(subsampled_pathhops[i], path_hops[i])
+                l = int(min(max(total_dissimilarity_means[i] / hop_skip_limit[i], 1), path_hops[i]))
                 paths[i,:l+1] = paths[i, np.linspace(0, path_hops[i], l+1, dtype = np.int32)]
                 paths[i,l+1:] = paths[i, -1]
                 path_hops[i] = l
@@ -269,23 +269,6 @@ class FeatureEngineeringLayer(keras.layers.Layer):
 
     def call(self, csi):
         csi = tf.complex(csi[...,0], csi[...,1])
-
-        ## Provide sample autocorrelation separately across columns / rows / diagonals / antidiagonals of antenna arrays
-        #sample_autocorrelations_along_rows = tf.einsum("dbrmt,dbsmt->dbtrsm", csi, tf.math.conj(csi))
-        #sample_autocorrelations_along_columns = tf.einsum("dbrmt,dbrnt->dbtrmn", csi, tf.math.conj(csi))
-        #sample_autocorrelations_along_diagonals = tf.einsum("dbmt,dbmt->dbtm", csi[:,:,0,:-1,:], tf.math.conj(csi[:,:,1,1:,:]))
-        #sample_autocorrelations_along_antidiagonals = tf.einsum("dbmt,dbmt->dbtm", csi[:,:,0,1:,:], tf.math.conj(csi[:,:,1,:-1,:]))
-
-        ## Flatten along all dimensions except datapoint index dimension
-        #sample_autocorrelations_along_rows_flat = tf.reshape(sample_autocorrelations_along_rows, (-1, tf.math.reduce_prod(sample_autocorrelations_along_rows.shape[1:]),))
-        #sample_autocorrelations_along_columns_flat = tf.reshape(sample_autocorrelations_along_columns, (-1, tf.math.reduce_prod(sample_autocorrelations_along_columns.shape[1:])))
-        #sample_autocorrelations_along_diagonals_flat = tf.reshape(sample_autocorrelations_along_diagonals, (-1, tf.math.reduce_prod(sample_autocorrelations_along_diagonals.shape[1:]),))
-        #sample_autocorrelations_along_antidiagonals_flat = tf.reshape(sample_autocorrelations_along_antidiagonals, (-1, tf.math.reduce_prod(sample_autocorrelations_along_antidiagonals.shape[1:]),))
-
-        #feature_input = tf.concat([tf.math.real(sample_autocorrelations_along_rows_flat), tf.math.imag(sample_autocorrelations_along_rows_flat),
-        #                         tf.math.real(sample_autocorrelations_along_columns_flat), tf.math.imag(sample_autocorrelations_along_columns_flat),
-        #                         tf.math.real(sample_autocorrelations_along_diagonals_flat), tf.math.imag(sample_autocorrelations_along_diagonals_flat),
-        #                         tf.math.real(sample_autocorrelations_along_antidiagonals_flat), tf.math.imag(sample_autocorrelations_along_antidiagonals_flat)], axis = -1)
 
         csi_sum_by_array = tf.math.reduce_sum(csi, axis = (2, 3))
         sample_autocorrelations = tf.einsum("dbrmt,dbsnt->dbrsmnt", csi, tf.math.conj(csi))
@@ -331,7 +314,7 @@ class ChannelChartingLoss(keras.losses.Loss):
 
         # Model acceleration with folded normal distribution
         return tf.math.reduce_mean((tf.square(pred_accelerations_abs - self.acceleration_mean) + tf.square(pred_accelerations_abs + self.acceleration_mean)) / self.acceleration_variance)
-
+   
     def call(self, y_true, y_pred):
         # This is an ugly workaround, the loss function always gets y_pred as float, convert back to integer for index
         # This works as long as CSI tensor is not absolutely huge (16M+ entries), which can be assumed.
@@ -347,7 +330,7 @@ class ChannelChartingLoss(keras.losses.Loss):
         pos_A = tf.gather(y_pred, index_A)
         pos_B = tf.gather(y_pred, index_B)
 
-        # Acceleration loss
+        # Acceleration loss (no applied during pre-training phase)
         acceleration_loss = self.acceleration(y_pred)
 
         # Geodesic loss
@@ -371,7 +354,7 @@ class ChannelChartingLoss(keras.losses.Loss):
         return geodesic_loss + self.acceleration_weight * acceleration_loss
 
 class ChannelChart:
-    def __init__(self, GDM, csi_time_domain, timestamps, min_batch_size = 1500, max_batch_size = 4000, learning_rate_initial = 1e-2, learning_rate_final = 1e-4, min_pathhops = 1, max_pathhops = 30, randomize_pathhops = False, training_batches = 2000, plot_callback = None, acceleration_mean = 0.8, acceleration_variance = 1.7, acceleration_weight = 0.01):
+    def __init__(self, GDM, csi_time_domain, timestamps, min_batch_size = 1500, max_batch_size = 4000, learning_rate_initial = 1e-2, learning_rate_final = 1e-4, max_hoplength = 10.0, min_hoplength = 0.25, randomize_pathhops = False, training_batches = 2000, plot_callback = None, acceleration_mean = 0.8, acceleration_variance = 1.7, acceleration_weight = 0.01, max_pathhops = 100):
         # Build forward charting function
         fcf_input = keras.Input(shape=csi_time_domain.shape[1:] + (2,), name="input", dtype = tf.float32)
         fcf_output = FeatureEngineeringLayer()(fcf_input)
@@ -401,7 +384,7 @@ class ChannelChart:
             while True:
                 batch_count = todo_queue.get()
 
-                if batch_count is None:
+                if batch_count == -1:
                     output_queue.put((-1, None))
                     break
         
@@ -409,18 +392,18 @@ class ChannelChart:
                 batch_size = int(np.round(batch_count / training_batches * (max_batch_size - min_batch_size) + min_batch_size))
                 
                 # Determine number of hops for current subsampling ratio
-                pathhops_limit = int(np.round(batch_count / training_batches * (max_pathhops - min_pathhops) + min_pathhops))
+                pathhops_length_limit = (batch_count / training_batches)**0.2 * (min_hoplength - max_hoplength) + max_hoplength
                 if randomize_pathhops:
-                    pathhops = np.random.randint(1, pathhops_limit + 1, size = batch_size)
+                    pathhops_maxlength = np.random.uniform(pathhops_length_limit, max_hoplength, size = batch_size)
                 else:
-                    pathhops = np.ones(batch_size, dtype = np.int32) * pathhops_limit
-    
+                    pathhops_maxlength = np.ones(batch_size, dtype = np.float32) * pathhops_length_limit
+
                 # Generate random short paths and assemble y_true, consisting of batch_size paths, each made up of
                 # * number of path hops
                 # * mean value of dissimilarity random variable
                 # * variance of  dissimilarity random variable
                 # * datapoint indices along path; ends with repeating last index if too few hops
-                paths, path_hops, total_dissimilarity_means, total_dissimilarity_variances = GDM.get_random_short_paths(batch_size, pathhops)
+                paths, path_hops, total_dissimilarity_means, total_dissimilarity_variances = GDM.get_random_short_paths(batch_size, pathhops_maxlength)
                 paths = paths[:,:max_pathhops + 1]
                 y_true = np.hstack([path_hops[:,np.newaxis], total_dissimilarity_means[:,np.newaxis], total_dissimilarity_variances[:,np.newaxis], paths])
     
@@ -475,14 +458,13 @@ class ChannelChart:
                         staircase=False)
 
         optimizer = tf.keras.optimizers.Adam(learning_rate = lr_schedule)
-
-        # Metrics and callbacks
+        
         train_callbacks = [keras.callbacks.TerminateOnNaN()]
         train_metrics = []
         if plot_callback is not None:
             train_callbacks.append(plot_callback)
             train_metrics.append(plot_callback.metric)
-
+        
         # Compile and fit
         training_model.compile(loss = training_loss, optimizer = optimizer, metrics = train_metrics)
         training_model.fit(random_path_dataset, steps_per_epoch = training_batches, callbacks = train_callbacks)
