@@ -4,6 +4,8 @@ This repository contains partial source code for the results presented in the pa
 
 > Florian Euchner, Phillip Stephan, Stephan ten Brink: "Uncertainty-Aware Dimensionality Reduction for Channel Charting with Geodesic Loss"
 
+presented at the Asilomar Conference on Signals, Systems, and Computers in October 2024.
+
 ### Summary
 The paper suggests three ways to improve the localization accuracy of Channel Charting:
 * **Batch-wise training architecture and acceleration constraint**: Instead of a Siamese neural network architecture, feed the complete dataset into the neural network for every batch. This provides a global view of the channel chart in the loss function definition, which facilitates the introduction of an *acceleration constraint*, which means we take into account the physical inertia of the transmitter.
@@ -62,7 +64,20 @@ Only Array 3 | Only Array 4
 :-:|:-:
 <img src="img/cc_only_3.png" alt="Learned Channel Chart, CSI only from array 3" width="300"/> | <img src="img/cc_only_4.png" alt="Learned Channel Chart, CSI only from array 4" width="300"/>
 
-### Citation
+## Prerequisites
+Our code is based on Python, TensorFlow, NumPy, SciPy and Matplotlib.
+Source files are provided as Jupyter Notebooks, which can be opened directly here on GitHub or using, e.g., [JupyterLab](https://jupyter.org/).
+
+We run our Channel Charting experiments on a JupyterHub server with NVMe storage, AMD EPYC 7262 8-Core Processor, 64GB RAM, and a NVIDIA GeForce RTX 4080 GPU for accelerating TensorFlow.
+All indications of computation times are measured on this system.
+
+## How to use
+
+* First, run `1_DownloadDataset.ipynb` to obtain the `dichasus-cf0x` dataset in `rev2` version.
+* Then, either run `1_AllAntennas.ipynb` to learn a Channel Chart using CSI data from all antenna arrays or
+* run `2_OneArray.ipynb` to learn a Channel Chart using CSI data from just one antenna array. You can select the antenna array to use `b = 1/2/3/4` in the notebook.
+
+## Citation
 ```
 @inproceedings{euchner2024uncertainty,
 	author    = {Euchner, Florian and Stephan, Phillip and ten Brink, Stephan},
@@ -72,7 +87,7 @@ Only Array 3 | Only Array 4
 }
 ```
 
-### Other Resources
+## Other Resources
 * [Christoph Studer's Channel Charting Website](https://channelcharting.github.io/)
 * [The original Channel Charting paper](https://arxiv.org/abs/1807.05247)
 * [DICHASUS Website](https://dichasus.inue.uni-stuttgart.de/)
