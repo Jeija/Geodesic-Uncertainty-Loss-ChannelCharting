@@ -71,3 +71,11 @@ Only Array 3 | Only Array 4
 	year      = {2024}
 }
 ```
+
+### Other Resources
+* [Christoph Studer's Channel Charting Website](https://channelcharting.github.io/)
+* [The original Channel Charting paper](https://arxiv.org/abs/1807.05247)
+* [DICHASUS Website](https://dichasus.inue.uni-stuttgart.de/)
+* [Our tutorial on dissimilarity metric-based Channel Charting](https://dichasus.inue.uni-stuttgart.de/tutorials/tutorial/dissimilarity-metric-channelcharting/)
+* [Our paper on dissimilarity metric-based Channel Charting](https://arxiv.org/abs/2308.09539)
+* [Our paper on augmented Channel Charting](https://arxiv.org/abs/2312.01968)
