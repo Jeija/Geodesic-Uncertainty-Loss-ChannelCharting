@@ -390,6 +390,9 @@ class ChannelChart:
         
                 # Determine current batch size
                 batch_size = int(np.round(batch_count / training_batches * (max_batch_size - min_batch_size) + min_batch_size))
+
+                # Round batch size to nearest steps of 200 to prevent re-tracing compute graph too often
+                batch_size = int(np.round(batch_size / 200) * 200)
                 
                 # Determine number of hops for current subsampling ratio
                 pathhops_length_limit = (batch_count / training_batches)**0.15 * (min_hoplength - max_hoplength) + max_hoplength

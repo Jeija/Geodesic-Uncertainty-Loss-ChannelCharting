@@ -54,7 +54,7 @@ class PlotChartCallback(keras.callbacks.Callback):
         self.y_pred = tf.Variable(np.zeros([self.datapoint_count, 2]), dtype=tf.float32, shape=tf.TensorShape([self.datapoint_count, 2]))
 
     def metric(self, y_true, y_pred):
-        self.y_true.assign(y_true[:self.paths_to_plot_count])
+        self.y_true.assign(tf.cast(y_true[:self.paths_to_plot_count], tf.float32))
         self.y_pred.assign(y_pred)
         return 0
 
