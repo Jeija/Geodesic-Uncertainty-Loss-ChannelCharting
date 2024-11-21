@@ -6,6 +6,8 @@ This repository contains partial source code for the results presented in the pa
 
 presented at the Asilomar Conference on Signals, Systems, and Computers in October 2024.
 
+* [Presentation Slides](PresentationSlides_Asilomar2024.pdf)
+
 ### Summary
 The paper suggests three ways to improve the localization accuracy of Channel Charting:
 * **Batch-wise training architecture and acceleration constraint**: Instead of a Siamese neural network architecture, feed the complete dataset into the neural network for every batch. This provides a global view of the channel chart in the loss function definition, which facilitates the introduction of an *acceleration constraint*, which means we take into account the physical inertia of the transmitter.
