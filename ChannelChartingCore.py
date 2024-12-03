@@ -290,7 +290,7 @@ class FeatureEngineeringLayer(keras.layers.Layer):
         feature_input = tf.concat([tf.math.real(sample_autocorrelations_flat), tf.math.imag(sample_autocorrelations_flat),
                                   tf.math.real(array_sample_autocorrelations_flat), tf.math.imag(array_sample_autocorrelations_flat),
                                   tf.math.real(horiz1_flat), tf.math.imag(horiz1_flat),
-                                   tf.math.real(horiz2_flat), tf.math.imag(horiz2_flat)], axis = -1)
+                                  tf.math.real(horiz2_flat), tf.math.imag(horiz2_flat)], axis = -1)
 
         return feature_input
 
@@ -299,10 +299,13 @@ class FeatureEngineeringLayer(keras.layers.Layer):
 
 
 class ChannelChartingLoss(keras.losses.Loss):
-    def __init__(self, timestamps, acceleration_mean = 0.8, acceleration_variance = 1.7, acceleration_weight = 0.01, name="CCLoss"):
+    def __init__(self, timestamps, acceleration_mean = 0.0, acceleration_variance = 1.7, acceleration_weight = 0.01, name="CCLoss"):
         super().__init__(name=name)
         self.timestamps = tf.constant(timestamps)
 
+        # Currently, only zero-mean acceleration models are supported
+        assert(acceleration_mean == 0.0)
+        
         self.acceleration_mean = acceleration_mean
         self.acceleration_variance = acceleration_variance
         self.acceleration_weight = acceleration_weight
@@ -310,10 +313,18 @@ class ChannelChartingLoss(keras.losses.Loss):
     def acceleration(self, pred_positions):
         pred_velocities = tf.experimental.numpy.diff(pred_positions, axis = 0) / tf.experimental.numpy.diff(self.timestamps)[:,tf.newaxis]
         pred_accelerations = tf.experimental.numpy.diff(pred_velocities, axis = 0) / tf.experimental.numpy.diff(self.timestamps)[:-1,tf.newaxis]
-        pred_accelerations_abs = tf.math.sqrt(tf.math.reduce_sum(pred_accelerations**2, axis = -1) + 1e-6)
+        pred_accelerations_abs = tf.math.sqrt(tf.math.reduce_sum(pred_accelerations**2, axis = -1) + 1e-8)
 
-        # Model acceleration with folded normal distribution
-        return tf.math.reduce_mean((tf.square(pred_accelerations_abs - self.acceleration_mean) + tf.square(pred_accelerations_abs + self.acceleration_mean)) / self.acceleration_variance)
+        # This is the "folded normal distribution model" described in the paper that we would ideally like to use.
+        # Problem: ln(exp() + exp()) is numerically not nice...
+        #folded_a = -tf.square(pred_accelerations_abs - self.acceleration_mean) / (2 * self.acceleration_variance)
+        #folded_b = -tf.square(pred_accelerations_abs + self.acceleration_mean) / (2 * self.acceleration_variance)
+        #return -tf.math.reduce_mean(tf.math.log(tf.math.exp(folded_a) + tf.math.exp(folded_b) + 1e-25))
+
+        # Therefore, we use a simpler model that only supports self.acceleration_mean = 0 (which is guaranteed by assertion in __init__).
+        # In that case (zero-mean folded normal distribution), ln and exp cancel out nicely:
+        return tf.math.reduce_mean(tf.square(pred_accelerations_abs) / self.acceleration_variance)
+
    
     def call(self, y_true, y_pred):
         # This is an ugly workaround, the loss function always gets y_pred as float, convert back to integer for index
@@ -409,7 +420,7 @@ class ChannelChart:
                 paths, path_hops, total_dissimilarity_means, total_dissimilarity_variances = GDM.get_random_short_paths(batch_size, pathhops_maxlength)
                 paths = paths[:,:max_pathhops + 1]
                 y_true = np.hstack([path_hops[:,np.newaxis], total_dissimilarity_means[:,np.newaxis], total_dissimilarity_variances[:,np.newaxis], paths])
-    
+
                 output_queue.put((batch_count, y_true))
 
         y_true_pregenerated = dict()
@@ -470,7 +481,7 @@ class ChannelChart:
         
         # Compile and fit
         training_model.compile(loss = training_loss, optimizer = optimizer, metrics = train_metrics)
-        training_model.fit(random_path_dataset, steps_per_epoch = training_batches, callbacks = train_callbacks)
+        self.history = training_model.fit(random_path_dataset, steps_per_epoch = training_batches, callbacks = train_callbacks)
 
     def predict(self, csi_time_domain):
         csi_time_domain_tensor = tf.constant(csi_time_domain)
