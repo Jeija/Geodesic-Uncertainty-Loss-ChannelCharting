@@ -7,6 +7,7 @@ This repository contains partial source code for the results presented in the pa
 presented at the Asilomar Conference on Signals, Systems, and Computers in October 2024.
 
 * [Presentation Slides](PresentationSlides_Asilomar2024.pdf)
+* [Paper on arXiv](https://arxiv.org/abs/2412.01715)
 
 ### Summary
 The paper suggests three ways to improve the localization accuracy of Channel Charting:
