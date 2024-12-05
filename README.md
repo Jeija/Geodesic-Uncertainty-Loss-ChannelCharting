@@ -9,6 +9,8 @@ presented at the Asilomar Conference on Signals, Systems, and Computers in Octob
 * [Presentation Slides](PresentationSlides_Asilomar2024.pdf)
 * [Paper on arXiv](https://arxiv.org/abs/2412.01715)
 
+Please also take a look at the [ablation-study](https://github.com/Jeija/Geodesic-Uncertainty-Loss-ChannelCharting/tree/ablation-study) branch to find the notebooks to reproduce the results from the ablation study (and other tables) in the paper.
+
 ### Summary
 The paper suggests three ways to improve the localization accuracy of Channel Charting:
 * **Batch-wise training architecture and acceleration constraint**: Instead of a Siamese neural network architecture, feed the complete dataset into the neural network for every batch. This provides a global view of the channel chart in the loss function definition, which facilitates the introduction of an *acceleration constraint*, which means we take into account the physical inertia of the transmitter.
